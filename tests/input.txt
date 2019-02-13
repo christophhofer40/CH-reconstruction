@@ -1,0 +1,9 @@
+#blur	False
+#viewnumber	-1
+#aberrations	False
+#intensities	False
+#positions	False
+#threefold	False
+iterations	10
+reconstruct	True
+energy	10

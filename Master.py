@@ -13,8 +13,11 @@ import os
 from scipy.optimize import fmin
 from shutil import move 
 import random     
+from Quaternion import Quaternion
+from Run_lammps import Run_lammps
 
-
+lammps=None
+energy_contribution=0
 
 class Master:
     def __init__(self, topfile,beamfile,images,update_contrast=False,mask=[],reset_intensities=False):
@@ -26,13 +29,20 @@ class Master:
         self.views=[]
         self.rings=[]
         self.bonds=[]
+        self.lammps=None
         self.mask=mask
+        self.totalnumber=0
         self.init_from_topfile(reset_intensities)
         self.read_errortrack()
         self.init_beams()
         if update_contrast:
             self.update_contrast()
         self.viewnb=-1 #only optimize certain view
+        self.disterror=-1
+        self.update_structure()
+        self.write_xyz()
+        self.energy=-1
+        self.merit=-1
         
         
     def init_from_topfile(self,reset_intensities):
@@ -41,21 +51,27 @@ class Master:
         self.rings=[]
         self.bonds=[]
         with open(self.topfile,'r') as f:
-            chapter=-1
+            chapter=-1            
             for line in f:
                 if line.startswith('#') or line=='':
                     continue
-                if line.startswith('ATOM'):
+                if line.startswith('ATOM'):            
                     splitline=line.strip().split('\t')
                     if chapter==-1:
                         self.atoms.append(Atom(float(splitline[3]),float(splitline[4]),float(splitline[5]),int(splitline[1]),int(splitline[2])))
                         if len(splitline)>=7:
                             self.atoms[-1].element=int(splitline[6])
+                        if self.atoms[-1].viewcounts>=len(self.image_stack):
+                            self.totalnumber+=1
+                        else:
+                            self.atoms[-1].member=False
                     else:
                         if math.isnan(float(splitline[2])) or math.isnan(float(splitline[3])):
                             continue
-                        self.views[chapter].twoDatoms.append(TwoDatom(float(splitline[2]),float(splitline[3]),int(splitline[1]),
-                                  chapter,self.atoms[int(splitline[1])]))
+                        twodatom=TwoDatom(float(splitline[2]),float(splitline[3]),int(splitline[1]),
+                                  self.views[chapter],self.atoms[int(splitline[1])])
+                        self.views[chapter].twoDatoms.append(twodatom)
+                        self.atoms[int(splitline[1])].twodatoms.append(twodatom)
                         if reset_intensities:
                             continue
                         if len(splitline)>=5:
@@ -79,13 +95,18 @@ class Master:
                     self.views[chapter].background=float(splitline[1])    
                 if line.startswith('IMPURITIES'):
                     splitline=line.strip().split('\t')
-                    self.views[chapter].impurities=float(splitline[1]) 
-                    
+                    self.views[chapter].impurities=float(splitline[1])                    
                 if line.startswith('BOND'):
-                    pass
+                    splitline=line.strip().split('\t')
+                    a1=int(splitline[1])
+                    a2=int(splitline[2])
+                    if self.atoms[a1].member and self.atoms[a2].member:
+                        self.bonds.append(Bond(self.atoms[a1],self.atoms[a2]))
                 if line.startswith('RING'):
                     pass
-            
+                if line.startswith('QUATERNION'):
+                    splitline=line.strip().split('\t')
+                    self.views[chapter].quaternion=Quaternion(float(splitline[1]),float(splitline[2]))
             
     def init_beams(self):
         exists = os.path.isfile(self.path+self.beamfile)
@@ -121,8 +142,18 @@ class Master:
                     f.write('Sigma\t'+str(0)+'\n')
                     f.write('FieldOfView\t'+str(5)+'\n\n')       
  
-                    
-                
+    def init_lammps(self):
+        global lammps
+        lammps=Run_lammps(self.path,self)
+        self.lammps=lammps
+        
+        
+    def get_energy(self):
+        pass
+    
+    def set_energy_contribution(self,energycontr):
+        global energy_contribution
+        energy_contribution=energycontr
         
     def write_beamparameters(self):
         with open(self.path+self.beamfile,'w') as f:
@@ -139,24 +170,32 @@ class Master:
                 f.write('FieldOfView\t'+str(self.views[i].fov)+'\n\n') 
     
     def write_topfile(self):
-        with open(self.topfile[:-4]+'_new.top','w') as f:
+        with open(self.topfile[:-4]+str(energy_contribution)+'_new.top','w') as f:
             f.write('MASTER\t'+str(len(self.atoms))+'\n\n')
             for atom in self.atoms:
                 f.write('ATOM\t'+str(atom.id)+'\t'+str(atom.viewcounts)+'\t'+str(atom.x)+'\t'+str(atom.y)+'\t'+str(atom.z)+'\t'+str(atom.element)+'\n')
+            f.write('\n\n')
+            for bond in self.bonds:
+                f.write('BOND\t'+str(bond.a1.id)+'\t'+str(bond.a2.id)+'\n')
             for view in self.views:
                 f.write('\n\nVIEW\t'+str(view.view)+'\n')
+                f.write('QUATERNION\t'+str(view.quaternion.inclination)+'\t'+str(view.quaternion.azimuth)+'\n')
+                f.write('TRANSLATION\t'+str(view.translation[0])+'\t'+str(view.translation[1])+'\n')
                 f.write('BACKGROUND\t'+str(view.background)+'\n')
                 f.write('GLOBAL_SCALE\t'+str(view.global_scale)+'\n')
                 f.write('IMPURITIES\t'+str(view.impurities)+'\n\n')
+                
                 #f.write('VIEW\t'+str(view.view)+'\n')
                 #f.write('VIEW\t'+str(view.view)+'\n')
                 #f.write('VIEW\t'+str(view.view)+'\n')
                 for atom2d in view.twoDatoms:
                     f.write('ATOM\t'+str(atom2d.id)+'\t'+str(atom2d.x)+'\t'+str(atom2d.y)+'\t'+str(atom2d.intensity)+'\n')
+                    f.write('SEEN\t'+str(atom2d.id)+'\t'+str(atom2d.x_calc)+'\t'+str(atom2d.y_calc)+'\t'+str(atom2d.intensity)+'\n')
                 
     def save_topfile(self):
         self.write_topfile()
         move(self.topfile[:-4]+'_new.top',self.topfile)
+        
                 
                 
     def match_threefold(self):
@@ -226,12 +265,91 @@ class Master:
                 continue
             view.match_contrast()
         
+        
+    def update_disterror(self):
+        self.disterror=0
+        for view in self.views:
+            self.disterror+=view.update_distance_error()
+        self.disterror/=len(self.views)
+        self.update_merit()
+        return self.disterror
     
+    def update_disterror2(self): #same merit
+        er=0
+        for atom in self.atoms:
+            if atom.member:
+                er+=atom.get_error()
+        er/=self.totalnumber
+        return er
+    
+    def update_merit(self):
+        if lammps!=None:
+            energy=lammps.energy/self.totalnumber
+        else:
+            energy=0
+        self.merit=self.disterror*self.disterror*(1-energy_contribution/100)+energy*energy_contribution/100
+            
+    def update_structure(self):
+        for view in self.views:
+            view.translation=[0,0]
+        for atom in self.atoms:
+            if not atom.member:
+                continue
+            atom.update_positions()
+        for view in self.views:
+            view.update_translation()
+            
+    def optimize_structure(self):
+        for atom in self.atoms:
+            if not atom.member:
+                continue
+            atom.optimize_position()
+            if lammps!=None:
+                print('\nenergy:\t'+str(lammps.energy/self.totalnumber))
+            self.update_disterror()
+            #print('disterror:\t'+str(self.disterror))
+            print('merit:\t'+str(self.merit))
+        self.write_xyz()    
+        self.write_topfile() 
+                                  
+    def write_xyz(self):
+        scale=self.views[0].fov*10/self.views[0].imageWidth
+        with open(self.path+'master_'+str(energy_contribution)+'.xyz','w') as f:
+            f.write(str(self.totalnumber))
+            f.write('\noptimized structure with energy contribution '+str(energy_contribution)+'\n')
+            for atom in self.atoms:
+                if atom.viewcounts<len(self.image_stack):
+                    continue
+                f.write(str(atom.element)+' '+str(atom.x*scale)+' '+str(atom.y*scale)+' '+str(atom.z*scale)+'\n')
+                
+     ### FOV of master is fov of first view
+    def match_fov(self):
+        def errfun(params):
+            self.views[0].fov=params[0]
+            lammps.update_positions()
+            
+            #print(str(lammps.energy))
+            return lammps.energy
+        #print('error before\t'+str(self.error))
+        olderror=lammps.energy
+        oldpar=self.views[0].fov
+        teng,fopt=fmin(errfun,self.views[0].fov+random.normalvariate(0,0.5),maxiter=15,full_output=True,disp=True)[:2]
+        if fopt>=olderror:
+            #print('WARNING: optimization leads to larger error')
+            self.views[0].fov=oldpar
+            lammps.update_positions()
+            print('fov not changed')
+            return
+        print('new fov: '+str(self.views[0].fov))
+        self.views[0].fov=teng[0]
+        lammps.update_positions()
+        self.write_beamparameters()
+        #print('error after\t'+str(self.error))
         
-        
-                            
+    
+            
                         
-class Atom:
+class Atom(Master):
     def __init__(self,x,y,z,id_,viewcounts,element=6):
         self.x=x
         self.y=y
@@ -239,9 +357,75 @@ class Atom:
         self.id=id_
         self.viewcounts=viewcounts
         self.element=element
-    
-
+        self.twodatoms=[]
+        self.bonds=[]
+        self.rings=[]
+        self.member=True #if it is included in 3D model
         
+    def set_position(self,x,y,z,update_lammps=True):
+        #global lammps
+        self.x=x
+        self.y=y
+        self.z=z
+        self.update_positions()
+        if (lammps!=None and update_lammps):
+            lammps.set_position(self.lammpsid,x,y,z)
+        else:
+            pass
+        self.get_error()
+        
+    
+    def update_positions(self):
+        for atom in self.twodatoms:
+            atom.update_position(updateError=True)
+        
+    def get_error(self):
+        self.error=0
+        k=0
+        for atom in self.twodatoms:
+            self.error+=atom.error
+            k+=1
+        if k!=0:
+            self.error/=k
+       
+        return self.error
+            
+                
+    def optimize_position(self):
+         def errfun(param):
+             self.set_position(param[0],param[1],param[2],update_lammps=(energy_contribution!=0))
+             if lammps!=None:
+                 energy=lammps.energy
+             else:
+                 energy=0
+             
+             return self.get_error()*self.get_error()*(1-energy_contribution/100)+energy*energy_contribution/100
+         
+         if lammps!=None:
+             energy=lammps.energy
+         else:
+             energy=0
+         olderror=self.get_error()*self.get_error()*(1-energy_contribution/100)+energy*energy_contribution/100
+         oldpars=[self.x,self.y,self.z]
+         (x,y,z),fopt=fmin(errfun,[self.x+random.normalvariate(0,1),
+                                            self.y+random.normalvariate(0,1),
+                                            self.z+random.normalvariate(0,1)],
+                                            maxiter=100,full_output=True,disp=False)[:2]
+         if fopt>=olderror and olderror>=0:
+#print('WARNING: optimization leads to larger error')
+             self.set_position(oldpars[0],oldpars[1],oldpars[2])
+             return
+         self.set_position(x,y,z,update_lammps=(energy_contribution!=0))
+         
+         #print('new error:\t'+str(self.error))
+
+   
+class Bond:
+    
+    def __init__(self,a1,a2):
+        self.a1=a1
+        self.a2=a2
+          
 
 class View:
     
@@ -264,7 +448,8 @@ class View:
         self.diffimage=np.zeros((self.imageHeight,self.imageWidth))
         self.impurities=0
         self.mask=kwargs.get('mask',[])
-        
+        self.quaternion=None
+        self.translation=[10,0]
     
     def simulate_image(self):
         self.get_deltalattice()
@@ -497,9 +682,35 @@ class View:
             ar=ar[ar.argsort()]
             return [ar[:-self.impurities],ar[-self.impurities:]]
     
-        
+    def update_distance_error(self):
+        self.disterror=0
+        counts=0
+        for atom in self.twoDatoms:
+            if atom.atom.member:
+                self.disterror+=atom.update_error()
+                counts+=1
+        if counts!=0:
+            self.disterror/=counts
+        return self.disterror
     
-        
+    def update_translation(self,apply=True):
+        self.translation=[0,0]
+        ct=0
+        for atom in self.twoDatoms:
+            if atom.atom.member:
+                self.translation[0]+=atom.x-atom.x_calc
+                self.translation[1]+=atom.y-atom.y_calc
+                ct+=1
+        if ct!=0:
+            self.translation[0]/=ct
+            self.translation[1]/=ct
+        if apply:
+            for atom in self.twoDatoms:
+                if atom.atom.member:
+                    atom.x_calc+=self.translation[0]
+                    atom.y_calc+=self.translation[1]
+                    
+
 class TwoDatom(View):
     
     def __init__(self,x,y,id_,view,atom):
@@ -507,9 +718,20 @@ class TwoDatom(View):
         self.y=y
         self.id=id_
         self.view=view
-        self.fov=-1
         self.intensity=1 #scaling
         self.atom=atom
+        self.x_calc=0
+        self.y_calc=0
+        self.error=-1
         
-
+    def update_error(self):
+        self.error=np.sqrt((self.x_calc-self.x)**2+(self.y_calc-self.y)**2)
+        self.error*=1/self.view.imageWidth*self.view.fov*10 #A
+        return self.error
         
+    def update_position(self,updateError=True):
+        (self.x_calc,self.y_calc,self.z)=self.view.quaternion.qv_mult([self.atom.x,self.atom.y,self.atom.z])
+        self.x_calc+=self.view.translation[0]
+        self.y_calc+=self.view.translation[1]
+        if updateError:
+            self.update_error()

@@ -1,0 +1,54 @@
+############################################
+
+
+# Find The Energy of the Model
+
+# ---------- Initialize Simulation --------------------- 
+clear 
+units metal 
+dimension 3 
+boundary p p p 
+atom_style atomic
+atom_modify map array
+
+# ---------- Create Atoms --------------------- 
+box tilt large
+read_data modelmaster.data
+
+
+# ---------- Define Interatomic Potential --------------------- 
+pair_style lcbop
+#pair_style airebo 3.0 0 1
+#pair_coeff  CH.airebo C
+pair_coeff * * C.lcbop C
+
+neighbor 2.0 bin 
+neigh_modify delay 0 every 1 check yes 
+newton on
+
+# ---------- Define Settings --------------------- 
+compute eng all pe/atom 
+compute eatoms all reduce sum c_eng 
+
+# ---------- Run Minimization --------------------- 
+reset_timestep 0 
+thermo_style custom step pe pxx pyy pzz pxy pxz pyz lx ly lz xy fnorm fmax c_eatoms
+
+thermo 1
+
+run 0 
+
+########################################################################
+########################################################################
+
+
+variable teng equal "c_eatoms"
+#variable ecoh equal "v_teng" #/(v_area)"
+
+#print "Graphene distances = ${dist};"
+#print "Total energy (eV) = ${teng};"
+#print "%% Energy = ${teng}"
+
+
+#print "All done!" 
+                                 
