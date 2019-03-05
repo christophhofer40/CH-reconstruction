@@ -4,6 +4,7 @@
 #intensities	False
 #positions	False
 #threefold	False
-iterations	10
+iterations	50
 reconstruct	True
-energy	10
+energy	0
+#potential	True

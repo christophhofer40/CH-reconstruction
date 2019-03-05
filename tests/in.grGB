@@ -13,7 +13,7 @@ atom_modify map array
 
 # ---------- Create Atoms --------------------- 
 box tilt large
-read_data modelmaster.data
+read_data /home/christoph/gits/CH-reconstruction/tests/modelmaster.data
 
 
 # ---------- Define Interatomic Potential --------------------- 
@@ -36,7 +36,7 @@ thermo_style custom step pe pxx pyy pzz pxy pxz pyz lx ly lz xy fnorm fmax c_eat
 
 thermo 1
 
-run 0 
+run 0
 
 ########################################################################
 ########################################################################
@@ -46,8 +46,8 @@ variable teng equal "c_eatoms"
 #variable ecoh equal "v_teng" #/(v_area)"
 
 #print "Graphene distances = ${dist};"
-#print "Total energy (eV) = ${teng};"
-#print "%% Energy = ${teng}"
+print "Total energy (eV) = ${teng};"
+print "%% Energy = ${teng}"
 
 
 #print "All done!" 

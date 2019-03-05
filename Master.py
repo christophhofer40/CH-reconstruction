@@ -11,16 +11,19 @@ from scipy.ndimage.filters import gaussian_filter
 import math
 import os
 from scipy.optimize import fmin
+from scipy.optimize import minimize
 from shutil import move 
 import random     
 from Quaternion import Quaternion
 from Run_lammps import Run_lammps
-
+from Optimization import optimization as opt
 lammps=None
 energy_contribution=0
 
 class Master:
+    
     def __init__(self, topfile,beamfile,images,update_contrast=False,mask=[],reset_intensities=False):
+        global globmaster
         self.topfile=topfile
         self.path=os.path.dirname(topfile)+'/'
         self.beamfile=beamfile
@@ -41,9 +44,10 @@ class Master:
         self.disterror=-1
         self.update_structure()
         self.write_xyz()
-        self.energy=-1
+        #self.energy=-1
         self.merit=-1
-        
+        self.errorlist=[]
+        self.potentials=[]
         
     def init_from_topfile(self,reset_intensities):
         self.atoms=[]
@@ -58,7 +62,7 @@ class Master:
                 if line.startswith('ATOM'):            
                     splitline=line.strip().split('\t')
                     if chapter==-1:
-                        self.atoms.append(Atom(float(splitline[3]),float(splitline[4]),float(splitline[5]),int(splitline[1]),int(splitline[2])))
+                        self.atoms.append(Atom(self,float(splitline[3]),float(splitline[4]),float(splitline[5]),int(splitline[1]),int(splitline[2])))
                         if len(splitline)>=7:
                             self.atoms[-1].element=int(splitline[6])
                         if self.atoms[-1].viewcounts>=len(self.image_stack):
@@ -102,16 +106,20 @@ class Master:
                     a2=int(splitline[2])
                     if self.atoms[a1].member and self.atoms[a2].member:
                         self.bonds.append(Bond(self.atoms[a1],self.atoms[a2]))
+                        self.atoms[a1].neighbors.append(self.atoms[a2])
+                        self.atoms[a2].neighbors.append(self.atoms[a1])
                 if line.startswith('RING'):
                     pass
                 if line.startswith('QUATERNION'):
                     splitline=line.strip().split('\t')
                     self.views[chapter].quaternion=Quaternion(float(splitline[1]),float(splitline[2]))
+        self.read_errortrack_3D()
+        self.write_xyz()
             
     def init_beams(self):
-        exists = os.path.isfile(self.path+self.beamfile)
+        exists = os.path.isfile(self.beamfile)
         if exists:
-            with open(self.path+self.beamfile,'r') as f:
+            with open(self.beamfile,'r') as f:
                 for line in f:
                     if line.startswith('#') or line=='':
                         continue
@@ -133,7 +141,7 @@ class Master:
                         self.views[chapter].fov=float(splitline[1])
         else:
             print('beamparameter file not found, initializing default values')
-            with open(self.path+self.beamfile,'w') as f:
+            with open(self.beamfile,'w') as f:
                 f.write('# reads out aberrations, field of view and sigma for gaussblur\n'+
                         '# Slicenumber	C10	C12a	C12b	C21a	C21b	C23a	C23b\n\n')
                 for i in range(len(self.views)):
@@ -147,7 +155,6 @@ class Master:
         lammps=Run_lammps(self.path,self)
         self.lammps=lammps
         
-        
     def get_energy(self):
         pass
     
@@ -156,7 +163,7 @@ class Master:
         energy_contribution=energycontr
         
     def write_beamparameters(self):
-        with open(self.path+self.beamfile,'w') as f:
+        with open(self.beamfile,'w') as f:
             f.write('# reads out aberrations, field of view and sigma for gaussblur\n'+
                         '# Slicenumber	C10	C12a	C12b	C21a	C21b	C23a	C23b\n\n') 
             for i in range(len(self.views)):                              
@@ -168,9 +175,20 @@ class Master:
                         '\t'+str(self.views[i].aberrations.get('C23_b', 0))+'\n') 
                 f.write('Sigma\t'+str(self.views[i].sigma)+'\n')
                 f.write('FieldOfView\t'+str(self.views[i].fov)+'\n\n') 
+                
+    def read_errortrack_3D(self):
+        file=self.path+'error3D.txt'
+        exists = os.path.isfile(file)
+        if exists:
+            self.errorlist=np.loadtxt(file).tolist()
+            
     
     def write_topfile(self):
-        with open(self.topfile[:-4]+str(energy_contribution)+'_new.top','w') as f:
+        with open(self.topfile[:-4]+'_new.top','w') as f:
+            f.write('#ENERGY_CONTRIBUTION\t'+str(energy_contribution)+'\n')
+            if lammps!=None:
+                f.write('#ENERGY\t'+str(lammps.energy/self.totalnumber)+'\n')
+            f.write('#DEVIATION\t'+str(self.disterror)+'\n\n')
             f.write('MASTER\t'+str(len(self.atoms))+'\n\n')
             for atom in self.atoms:
                 f.write('ATOM\t'+str(atom.id)+'\t'+str(atom.viewcounts)+'\t'+str(atom.x)+'\t'+str(atom.y)+'\t'+str(atom.z)+'\t'+str(atom.element)+'\n')
@@ -191,11 +209,21 @@ class Master:
                 for atom2d in view.twoDatoms:
                     f.write('ATOM\t'+str(atom2d.id)+'\t'+str(atom2d.x)+'\t'+str(atom2d.y)+'\t'+str(atom2d.intensity)+'\n')
                     f.write('SEEN\t'+str(atom2d.id)+'\t'+str(atom2d.x_calc)+'\t'+str(atom2d.y_calc)+'\t'+str(atom2d.intensity)+'\n')
+        np.savetxt(self.path+'error3D_new.txt',self.errorlist)        
                 
     def save_topfile(self):
         self.write_topfile()
         move(self.topfile[:-4]+'_new.top',self.topfile)
+        move(self.path+'error3D_new.txt',self.path+'error3D.txt')
+       
         
+    ## this method should be used to geomatrically relax the structure when there is only one view  
+    def equalize_bonds(self):
+        for it in range(20):
+            for at in self.atoms:
+                if at.member:
+                    at.equalize_bonds()
+            
                 
                 
     def match_threefold(self):
@@ -271,7 +299,6 @@ class Master:
         for view in self.views:
             self.disterror+=view.update_distance_error()
         self.disterror/=len(self.views)
-        self.update_merit()
         return self.disterror
     
     def update_disterror2(self): #same merit
@@ -287,8 +314,10 @@ class Master:
             energy=lammps.energy/self.totalnumber
         else:
             energy=0
+        self.update_disterror()
         self.merit=self.disterror*self.disterror*(1-energy_contribution/100)+energy*energy_contribution/100
-            
+        return self.merit
+    
     def update_structure(self):
         for view in self.views:
             view.translation=[0,0]
@@ -306,15 +335,16 @@ class Master:
             atom.optimize_position()
             if lammps!=None:
                 print('\nenergy:\t'+str(lammps.energy/self.totalnumber))
-            self.update_disterror()
+            self.update_merit()
             #print('disterror:\t'+str(self.disterror))
             print('merit:\t'+str(self.merit))
+        self.errorlist.append(self.merit)
         self.write_xyz()    
         self.write_topfile() 
                                   
     def write_xyz(self):
         scale=self.views[0].fov*10/self.views[0].imageWidth
-        with open(self.path+'master_'+str(energy_contribution)+'.xyz','w') as f:
+        with open(self.path+'master.xyz','w') as f:
             f.write(str(self.totalnumber))
             f.write('\noptimized structure with energy contribution '+str(energy_contribution)+'\n')
             for atom in self.atoms:
@@ -346,11 +376,20 @@ class Master:
         self.write_beamparameters()
         #print('error after\t'+str(self.error))
         
+    def calc_potentials(self):
+        if lammps==None:
+            self.init_lammps()
+        for atom in self.atoms:
+            if not atom.member:
+                continue
+            atom.calc_potential()
+        np.savetxt(self.path+'potential.txt',self.potentials,header='distance\tenergys')    
     
             
                         
 class Atom(Master):
-    def __init__(self,x,y,z,id_,viewcounts,element=6):
+    def __init__(self,master,x,y,z,id_,viewcounts,element=6):
+        self.master=master
         self.x=x
         self.y=y
         self.z=z
@@ -358,7 +397,7 @@ class Atom(Master):
         self.viewcounts=viewcounts
         self.element=element
         self.twodatoms=[]
-        self.bonds=[]
+        self.neighbors=[]
         self.rings=[]
         self.member=True #if it is included in 3D model
         
@@ -370,8 +409,7 @@ class Atom(Master):
         self.update_positions()
         if (lammps!=None and update_lammps):
             lammps.set_position(self.lammpsid,x,y,z)
-        else:
-            pass
+
         self.get_error()
         
     
@@ -392,33 +430,99 @@ class Atom(Master):
             
                 
     def optimize_position(self):
+         
          def errfun(param):
              self.set_position(param[0],param[1],param[2],update_lammps=(energy_contribution!=0))
-             if lammps!=None:
-                 energy=lammps.energy
-             else:
-                 energy=0
+#             if lammps!=None:
+#                 energy=lammps.energy
+#             else:
+#                 energy=0
              
-             return self.get_error()*self.get_error()*(1-energy_contribution/100)+energy*energy_contribution/100
+             return self.master.update_merit()
+#         
+#         if lammps!=None:
+#             energy=lammps.energy
+#         else:
+#             energy=0
+         def callbackF(Xi):
+            #global Nfeval
+            print ('{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(Xi[4], Xi[0], Xi[1], Xi[2], Xi[3]))
+            #Nfeval += 1   
          
-         if lammps!=None:
-             energy=lammps.energy
-         else:
-             energy=0
-         olderror=self.get_error()*self.get_error()*(1-energy_contribution/100)+energy*energy_contribution/100
+        
+         olderror=self.master.update_merit()
          oldpars=[self.x,self.y,self.z]
-         (x,y,z),fopt=fmin(errfun,[self.x+random.normalvariate(0,1),
-                                            self.y+random.normalvariate(0,1),
-                                            self.z+random.normalvariate(0,1)],
-                                            maxiter=100,full_output=True,disp=False)[:2]
-         if fopt>=olderror and olderror>=0:
-#print('WARNING: optimization leads to larger error')
-             self.set_position(oldpars[0],oldpars[1],oldpars[2])
-             return
+#         (x,y,z),fopt=fmin(errfun,[self.x+random.normalvariate(0,2),
+#                                            self.y+random.normalvariate(0,2),
+#                                            self.z+random.normalvariate(0,2)],
+#                                            maxiter=30,full_output=True,disp=False)[:2]
+         print(  '{0:4s}   {1:9s}   {2:9s}   {3:9s}   {4:9s}'.format('Iter', ' X1', ' X2', ' X3', 'f(X)')   )
+         print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(0, self.x,self.y,self.z, self.master.merit)   )
+#         res=minimize(errfun,[self.x+random.normalvariate(0,2),self.y+random.normalvariate(0,2),self.z+random.normalvariate(0,2)],
+#                              options={'maxiter':1},callback=callbackF)
+#         x=res.x[0]
+#         y=res.x[1]
+#         z=res.x[2]
+         res=opt(errfun,oldpars,iterations=5,std=2)
+         x=res[0]
+         y=res[1]
+         z=res[2]
          self.set_position(x,y,z,update_lammps=(energy_contribution!=0))
+         fopt=self.master.update_merit()
+         print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(1, self.x,self.y,self.z, self.master.merit)   )
          
-         #print('new error:\t'+str(self.error))
-
+         if fopt>=olderror:
+             self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=(energy_contribution!=0))
+             self.master.update_merit()
+#         else:
+#             self.set_position(x,y,z,update_lammps=(energy_contribution!=0))
+    def calc_potential(self):
+        def errfun(param):
+             self.set_position(param[0],param[1],param[2],update_lammps=True)
+        oldpars=[self.x,self.y,self.z] 
+        olddist=self.master.disterror
+        oldenergy=lammps.energy
+        xr=self.x
+        yr=self.y
+        zr=self.z+random.normalvariate(0,2)
+    
+        self.set_position(xr,yr,zr,update_lammps=True)
+        self.master.update_disterror()
+        #radius=np.sqrt((oldpars[0]-xr)**2+(oldpars[1]-yr)**2+(oldpars[2]-zr)**2)/self.master.views[0].imageWidth*self.master.views[0].fov*1000
+        ret=[(zr-oldpars[2])/self.master.views[0].imageWidth*self.master.views[0].fov*10,self.master.disterror**2-olddist**2,(lammps.energy-oldenergy)/self.master.totalnumber]
+        self.master.potentials.append(ret)
+        self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=True)
+        self.master.update_disterror()
+        return ret
+    ## this method should be used to geomatrically relax the structure when there is only one view    
+    def equalize_bonds(self):
+        def errfun(param):
+            self.z=param[0]
+            return self.calc_bondstd()
+        self.x=self.twodatoms[0].x
+        self.y=self.twodatoms[0].y
+        olderror=self.calc_bondstd()
+        oldpar=self.z
+        z,fopt=fmin(errfun,self.z+random.normalvariate(0,2),full_output=True,disp=False,maxiter=10)[:2]
+        if fopt>=olderror:
+            self.z=oldpar
+        else:
+            self.z=z[0]
+            
+    def calc_bondstd(self):
+        atlist=[]
+        scalefactor=np.sqrt(3) # next neigbor distance in a
+        for at in self.neighbors:
+            for at2 in at.neighbors:
+                if at2!=self:
+                    bondlength_scaled=np.sqrt((at2.x-self.x)**2+(at2.y-self.y)**2+(at2.z-self.z)**2)/scalefactor
+                    atlist.append(bondlength_scaled)
+            bondlength=np.sqrt((at.x-self.x)**2+(at.y-self.y)**2+(at.z-self.z)**2)
+            atlist.append(bondlength)
+        if len(atlist)==0:
+            print('WARNING: No neighbors of atom number '+str(self.id))
+            return 0
+        return np.std(atlist)
    
 class Bond:
     
@@ -726,7 +830,7 @@ class TwoDatom(View):
         
     def update_error(self):
         self.error=np.sqrt((self.x_calc-self.x)**2+(self.y_calc-self.y)**2)
-        self.error*=1/self.view.imageWidth*self.view.fov*10 #A
+        self.error*=1/self.view.imageWidth*self.view.fov*100 #10*pm
         return self.error
         
     def update_position(self,updateError=True):

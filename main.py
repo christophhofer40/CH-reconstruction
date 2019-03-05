@@ -15,7 +15,7 @@ import numpy as np
 
 def read_inputFile(inputdic):
     exists = os.path.isfile(path+'input.txt')
-    keys=np.array(['blur','viewnumber','aberrations','intensities','positions','threefold','iterations','reconstruct','energy'])
+    keys=np.array(['blur','viewnumber','aberrations','intensities','positions','threefold','iterations','reconstruct','energy','potential'])
     for key in keys:
         inputdic[key]=False
     inputdic['viewnumber']=-1
@@ -44,66 +44,79 @@ def read_inputFile(inputdic):
         
                 
 if __name__=='__main__':  
+    
+    
     #topfile='/home/christoph/hdd/DATA/samples/GO/configurations_statistics/configurations/pair/models/new/pair_stack-masked2.top'
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/monovacancy/models/Stack-masked.top'   
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/vacancy-substitution/models/Stack-vacncies-masked2.top'
-    topfile='/home/christoph/gits/CH-reconstruction/tests/noisy_projections.top'
+    topfile='/home/christoph/gits/CH-reconstruction/tests/noisy_projections.top' 
     path=os.path.dirname(topfile)+'/'
+    inputdic={}
+    read_inputFile(inputdic)
     image_stack=TiffFile(topfile[:-4]+'.tif').asarray()
     try:
         mask=TiffFile(path+'mask.tif').asarray()
     except FileNotFoundError:
         mask=[]
     print('initialize topology...')
-    
-    master=Master.Master(topfile,'beamparameters.txt',image_stack,update_contrast=False,reset_intensities=False,mask=mask)
-    
-    inputdic={}
-    read_inputFile(inputdic)
+    if inputdic.get('energy',0)>0:
+        topfile=path+str(inputdic['energy']).zfill(3)+'/'+os.path.basename(topfile)
         
+    print('using topfile '+topfile)
+    master=Master.Master(topfile,path+'beamparameters.txt',image_stack,update_contrast=False,reset_intensities=False,mask=mask)
+    
     if inputdic.get('iterations',0)>0:
         while messagebox.askokcancel(title='Optimizer', message='continue?'):
             read_inputFile(inputdic)
-            for e in range(10):
-                inputdic['energy']=e+1
-                for i in range(inputdic.get('iterations',1)):
-                    master.viewnb=inputdic.get('viewnumber',-1)
-                    if inputdic['blur']:
-                        print('optimize gaussblur...')
-                        master.match_gaussblur()      
-                    if inputdic['aberrations']:
-                        print('optimize aberrations...')
-                        master.match_aberrations()
-                    if inputdic['threefold']:
-                        print('matching three-fold-astigmatism')
-                        master.match_threefold()
-                    if inputdic['positions']:
-                        print('optimizing 2D positions')
-                        master.optimize_2Dpositions()
-                    if inputdic['intensities']:
-                        print('optimizing individual intensities...')  
-                        master.match_intensities()
-                    if inputdic.get('energy',0)>0:
-                        master.set_energy_contribution(inputdic.get('energy',0))
-                        if master.lammps==None:
-                            master.init_lammps()
-                    if inputdic.get('reconstruct',False):  
-                        print('optimizing 3D structure')
-                        master.optimize_structure()
-               
-                
+            for i in range(inputdic.get('iterations',1)):
+                master.viewnb=inputdic.get('viewnumber',-1)
+                if inputdic['blur']:
+                    print('optimize gaussblur...')
+                    master.match_gaussblur()      
+                if inputdic['aberrations']:
+                    print('optimize aberrations...')
+                    master.match_aberrations()
+                if inputdic['threefold']:
+                    print('matching three-fold-astigmatism')
+                    master.match_threefold()
+                if inputdic['positions']:
+                    print('optimizing 2D positions')
+                    master.optimize_2Dpositions()
+                if inputdic['intensities']:
+                    print('optimizing individual intensities...')  
+                    master.match_intensities()
+                if inputdic.get('energy',0)>0:
+                    master.set_energy_contribution(inputdic.get('energy',0))
+                    if master.lammps==None:
+                        print('initializing lammps...')
+                        master.init_lammps()
+                if inputdic.get('reconstruct',False):  
+                    print('optimizing 3D structure...')
+                    master.optimize_structure()                
+                if inputdic.get('potential',False):  
+                    print('calculating potential...')
+                    master.calc_potentials()               
             master.write_topfile()
             ar=master.save_errortrack()
+            print('done!')
+    #print('geometrical relaxation...')
+    #master.equalize_bonds()
+    if inputdic.get('energy',0)==0:
+         master.init_lammps()
+         master.update_structure()
+         
     if inputdic.get('positions',False) or inputdic.get('intensities',False) or inputdic.get('reconstruct',False):
         if messagebox.askokcancel(title='Optimizer', message='save new topology?'):
             master.save_topfile()
+            
+       
     
     print('Deviation per Atom: '+str(master.update_disterror()))
     #master.write_topfile()
     
-    #master.init_lammps()
     #master.match_fov()
     #master.lammps.lmps.command('write_data new.data')
+    master.write_topfile()
     master.write_xyz()
     #master.plot_intensities()
     #a.match_intensities()
