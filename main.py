@@ -60,7 +60,14 @@ if __name__=='__main__':
         mask=[]
     print('initialize topology...')
     if inputdic.get('energy',0)>0:
-        topfile=path+str(inputdic['energy']).zfill(3)+'/'+os.path.basename(topfile)
+        topfile2=path+str(inputdic['energy']).zfill(3)+'/'+os.path.basename(topfile)
+        if not os.path.isfile(topfile2):
+            os.makedirs(path+str(inputdic['energy']).zfill(3), exist_ok=True)
+            from shutil import copy
+            copy(topfile,path+str(inputdic['energy']).zfill(3)+'/'+os.path.basename(topfile))
+        topfile=topfile2    
+            
+            
         
     print('using topfile '+topfile)
     master=Master.Master(topfile,path+'beamparameters.txt',image_stack,update_contrast=False,reset_intensities=False,mask=mask)
@@ -105,6 +112,8 @@ if __name__=='__main__':
          master.init_lammps()
          master.update_structure()
          
+    master.write_topfile()
+    master.write_xyz()
     if inputdic.get('positions',False) or inputdic.get('intensities',False) or inputdic.get('reconstruct',False):
         if messagebox.askokcancel(title='Optimizer', message='save new topology?'):
             master.save_topfile()
@@ -116,8 +125,7 @@ if __name__=='__main__':
     
     #master.match_fov()
     #master.lammps.lmps.command('write_data new.data')
-    master.write_topfile()
-    master.write_xyz()
+    
     #master.plot_intensities()
     #a.match_intensities()
     #master.update_plots()
