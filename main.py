@@ -15,7 +15,7 @@ import numpy as np
 
 def read_inputFile(inputdic):
     exists = os.path.isfile(path+'input.txt')
-    keys=np.array(['blur','viewnumber','aberrations','intensities','positions','threefold','iterations','reconstruct','energy','potential'])
+    keys=np.array(['blur','viewnumber','aberrations','contrast','intensities','positions','threefold','iterations','reconstruct','energy','potential'])
     for key in keys:
         inputdic[key]=False
     inputdic['viewnumber']=-1
@@ -49,7 +49,8 @@ if __name__=='__main__':
     #topfile='/home/christoph/hdd/DATA/samples/GO/configurations_statistics/configurations/pair/models/new/pair_stack-masked2.top'
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/monovacancy/models/Stack-masked.top'   
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/vacancy-substitution/models/Stack-vacncies-masked2.top'
-    topfile='/home/christoph/gits/CH-reconstruction/tests/noisy_projections.top' 
+    #topfile='/home/christoph/gits/CH-reconstruction/tests2/noisy_projection.top' 
+    topfile='/home/christoph/gits/CH-reconstruction/tests_new/noisy_projections.top' 
     path=os.path.dirname(topfile)+'/'
     inputdic={}
     read_inputFile(inputdic)
@@ -70,7 +71,7 @@ if __name__=='__main__':
             
         
     print('using topfile '+topfile)
-    master=Master.Master(topfile,path+'beamparameters.txt',image_stack,update_contrast=False,reset_intensities=False,mask=mask)
+    master=Master.Master(topfile,path+'beamparameters.txt',image_stack,update_contrast=inputdic.get('contrast',False),reset_intensities=False,mask=mask)
     
     if inputdic.get('iterations',0)>0:
         while messagebox.askokcancel(title='Optimizer', message='continue?'):
@@ -114,7 +115,8 @@ if __name__=='__main__':
          
     master.write_topfile()
     master.write_xyz()
-    if inputdic.get('positions',False) or inputdic.get('intensities',False) or inputdic.get('reconstruct',False):
+    if (inputdic.get('positions',False) or inputdic.get('intensities',False) 
+        or inputdic.get('reconstruct',False) or inputdic.get('contrast',False)):
         if messagebox.askokcancel(title='Optimizer', message='save new topology?'):
             master.save_topfile()
             

@@ -35,12 +35,13 @@ class Master:
         self.lammps=None
         self.mask=mask
         self.totalnumber=0
+        self.viewnb=-1 #only optimize certain view
         self.init_from_topfile(reset_intensities)
         self.read_errortrack()
         self.init_beams()
         if update_contrast:
             self.update_contrast()
-        self.viewnb=-1 #only optimize certain view
+        
         self.disterror=-1
         self.update_structure()
         self.write_xyz()
@@ -65,15 +66,19 @@ class Master:
                         self.atoms.append(Atom(self,float(splitline[3]),float(splitline[4]),float(splitline[5]),int(splitline[1]),int(splitline[2])))
                         if len(splitline)>=7:
                             self.atoms[-1].element=int(splitline[6])
-                        if self.atoms[-1].viewcounts>=len(self.image_stack):
-                            self.totalnumber+=1
+                        if len(self.image_stack.shape)>2:
+                            if self.atoms[-1].viewcounts>=len(self.image_stack):
+                                self.totalnumber+=1
+                            else: #every atom gets accepted in one view
+                                self.atoms[-1].member=False
                         else:
-                            self.atoms[-1].member=False
+                            self.totalnumber+=1
                     else:
                         if math.isnan(float(splitline[2])) or math.isnan(float(splitline[3])):
                             continue
                         twodatom=TwoDatom(float(splitline[2]),float(splitline[3]),int(splitline[1]),
-                                  self.views[chapter],self.atoms[int(splitline[1])])
+                                  self.views[chapter],
+                                  self.atoms[int(splitline[1])])
                         self.views[chapter].twoDatoms.append(twodatom)
                         self.atoms[int(splitline[1])].twodatoms.append(twodatom)
                         if reset_intensities:
@@ -232,7 +237,7 @@ class Master:
                 continue
             view.match_threefold()
         self.write_beamparameters()
-        self.update_plots()
+        #self.update_plots()
         
     def match_aberrations(self):
         for view in self.views:
@@ -240,7 +245,7 @@ class Master:
                 continue
             view.match_aberrations()
         self.write_beamparameters()
-        self.update_plots()
+        #self.update_plots()
         
     def reset_aberrations(self):
         for view in self.views:
@@ -254,7 +259,7 @@ class Master:
                 continue
             view.match_gaussblur()
         self.write_beamparameters()
-        self.update_plots()    
+        #self.update_plots()    
         
     def save_errortrack(self):
         ar=[]
@@ -276,7 +281,7 @@ class Master:
                 continue
             view.match_intensities()
         self.write_topfile()
-        self.update_plots() 
+       # self.update_plots() 
         
     
     def optimize_2Dpositions(self):
@@ -285,7 +290,7 @@ class Master:
                 continue
             view.optimize_2Dpositions()
         self.write_topfile()
-        self.update_plots()    
+        #self.update_plots()    
         
     def update_contrast(self):
         for view in self.views:
@@ -482,14 +487,17 @@ class Atom(Master):
         oldpars=[self.x,self.y,self.z] 
         olddist=self.master.disterror
         oldenergy=lammps.energy
-        xr=self.x
-        yr=self.y
+        xr=self.x+random.normalvariate(0,2)
+        yr=self.y+random.normalvariate(0,2)
         zr=self.z+random.normalvariate(0,2)
     
         self.set_position(xr,yr,zr,update_lammps=True)
         self.master.update_disterror()
         #radius=np.sqrt((oldpars[0]-xr)**2+(oldpars[1]-yr)**2+(oldpars[2]-zr)**2)/self.master.views[0].imageWidth*self.master.views[0].fov*1000
-        ret=[(zr-oldpars[2])/self.master.views[0].imageWidth*self.master.views[0].fov*10,self.master.disterror**2-olddist**2,(lammps.energy-oldenergy)/self.master.totalnumber]
+        ret=[(xr-oldpars[0])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
+             (yr-oldpars[1])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
+             (zr-oldpars[2])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
+             self.master.disterror**2-olddist**2,(lammps.energy-oldenergy)/self.master.totalnumber]
         self.master.potentials.append(ret)
         self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=True)
         self.master.update_disterror()
