@@ -49,6 +49,9 @@ class Master:
         self.merit=-1
         self.errorlist=[]
         self.potentials=[]
+        self.potentials1dx=[]
+        self.potentials1dy=[]
+        self.potentials1dz=[]
         
     def init_from_topfile(self,reset_intensities):
         self.atoms=[]
@@ -332,6 +335,7 @@ class Master:
             atom.update_positions()
         for view in self.views:
             view.update_translation()
+        self.update_merit() 
             
     def optimize_structure(self):
         for atom in self.atoms:
@@ -353,7 +357,7 @@ class Master:
             f.write(str(self.totalnumber))
             f.write('\noptimized structure with energy contribution '+str(energy_contribution)+'\n')
             for atom in self.atoms:
-                if atom.viewcounts<len(self.image_stack):
+                if not atom.member:
                     continue
                 f.write(str(atom.element)+' '+str(atom.x*scale)+' '+str(atom.y*scale)+' '+str(atom.z*scale)+'\n')
                 
@@ -388,7 +392,10 @@ class Master:
             if not atom.member:
                 continue
             atom.calc_potential()
-        np.savetxt(self.path+'potential.txt',self.potentials,header='distance\tenergys')    
+        np.savetxt(self.path+'potential.txt',self.potentials,header='distance\tenergys')
+        np.savetxt(self.path+'potential1dx.txt',self.potentials1dx,header='distance\tenergys')
+        np.savetxt(self.path+'potential1dy.txt',self.potentials1dy,header='distance\tenergys')
+        np.savetxt(self.path+'potential1dz.txt',self.potentials1dz,header='distance\tenergys')
     
             
                         
@@ -487,21 +494,42 @@ class Atom(Master):
         oldpars=[self.x,self.y,self.z] 
         olddist=self.master.disterror
         oldenergy=lammps.energy
-        xr=self.x+random.normalvariate(0,2)
-        yr=self.y+random.normalvariate(0,2)
-        zr=self.z+random.normalvariate(0,2)
-    
-        self.set_position(xr,yr,zr,update_lammps=True)
+        xs=random.normalvariate(0,2)
+        ys=random.normalvariate(0,2)
+        zs=random.normalvariate(0,2)
+       
+        ### "calibrate direction to energy     
+        ## positive energy change corresponds to negative direction
+        rets=[]#x,y,z
+        vec=[xs,ys,zs]
+        signs=[0,0,0]
+        for i in range(3):
+            ens=[]
+            for sign in (1,-1):               
+                newpos=oldpars.copy()
+                newpos[i]+=(vec[i]*sign)
+                self.set_position(newpos[0],newpos[1],newpos[2],update_lammps=True)
+                self.master.update_disterror()
+                ens.append((lammps.energy-oldenergy)/self.master.totalnumber)
+            if ens[0]>ens[1]:
+                signs[i]=-1
+            else:
+                signs[i]=1
+            rets.append([abs(vec[i]/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[i],self.master.disterror**2-olddist**2,ens[0]])
+        self.set_position(oldpars[0]+xs,oldpars[1]+ys,oldpars[2]+zs,update_lammps=True)
         self.master.update_disterror()
         #radius=np.sqrt((oldpars[0]-xr)**2+(oldpars[1]-yr)**2+(oldpars[2]-zr)**2)/self.master.views[0].imageWidth*self.master.views[0].fov*1000
-        ret=[(xr-oldpars[0])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
-             (yr-oldpars[1])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
-             (zr-oldpars[2])/self.master.views[0].imageWidth*self.master.views[0].fov*10,
+        ret=[abs(xs/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[0],
+             abs(ys/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[1],
+             abs(zs/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[2],
              self.master.disterror**2-olddist**2,(lammps.energy-oldenergy)/self.master.totalnumber]
         self.master.potentials.append(ret)
+        self.master.potentials1dx.append(rets[0])
+        self.master.potentials1dy.append(rets[1])
+        self.master.potentials1dz.append(rets[2])
         self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=True)
         self.master.update_disterror()
-        return ret
+        return (ret,rets) #3D, array of each direction
     ## this method should be used to geomatrically relax the structure when there is only one view    
     def equalize_bonds(self):
         def errfun(param):
