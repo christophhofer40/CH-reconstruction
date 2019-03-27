@@ -50,7 +50,7 @@ if __name__=='__main__':
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/monovacancy/models/Stack-masked.top'   
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/vacancy-substitution/models/Stack-vacncies-masked2.top'
     #topfile='/home/christoph/gits/CH-reconstruction/tests2/noisy_projection.top' 
-    topfile='/home/christoph/gits/CH-reconstruction/tests_new/noisy_projections.top' 
+    topfile='/home/christoph/gits/CH-reconstruction/tests_small/noisy_projections.top' 
     path=os.path.dirname(topfile)+'/'
     inputdic={}
     read_inputFile(inputdic)
@@ -74,7 +74,7 @@ if __name__=='__main__':
     master=Master.Master(topfile,path+'beamparameters.txt',image_stack,update_contrast=inputdic.get('contrast',False),reset_intensities=False,mask=mask)
     
     if inputdic.get('iterations',0)>0:
-        while messagebox.askokcancel(title='Optimizer', message='continue?'):
+        while messagebox.askokcancel(title='Optimizer with energy '+str(inputdic.get('energy',0)), message='continue?'):
             read_inputFile(inputdic)
             for i in range(inputdic.get('iterations',1)):
                 master.viewnb=inputdic.get('viewnumber',-1)
@@ -122,7 +122,7 @@ if __name__=='__main__':
             
        
     
-    print('Deviation per Atom: '+str(master.update_disterror()))
+    print('Deviation per Atom: '+str(np.sqrt(master.update_disterror())))
     #master.write_topfile()
     
     #master.match_fov()

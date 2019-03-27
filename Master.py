@@ -77,7 +77,17 @@ class Master:
                         else:
                             self.totalnumber+=1
                     else:
+                        if int(splitline[1])>=0: 
+                            if (math.isnan(self.image_stack[chapter][int(float(splitline[3])+0.5),int(float(splitline[2])+0.5)]) and 
+                                self.atoms[int(splitline[1])].member):
+                                #print('excluding atom id '+str(int(splitline[1])))
+                                self.atoms[int(splitline[1])].member=False
+                                self.totalnumber-=1
+
                         if math.isnan(float(splitline[2])) or math.isnan(float(splitline[3])):
+                            if self.atoms[int(splitline[1])].member:                        
+                                self.atoms[int(splitline[1])].member=False
+                                self.totalnumber-=1
                             continue
                         twodatom=TwoDatom(float(splitline[2]),float(splitline[3]),int(splitline[1]),
                                   self.views[chapter],
@@ -322,8 +332,8 @@ class Master:
             energy=lammps.energy/self.totalnumber
         else:
             energy=0
-        self.update_disterror()
-        self.merit=self.disterror*self.disterror*(1-energy_contribution/100)+energy*energy_contribution/100
+        self.update_disterror()## average squared distance-deviation
+        self.merit=self.disterror*(1-energy_contribution/100)+energy*energy_contribution/100 
         return self.merit
     
     def update_structure(self):
@@ -341,12 +351,14 @@ class Master:
         for atom in self.atoms:
             if not atom.member:
                 continue
+            oldmerit=self.merit
             atom.optimize_position()
-            if lammps!=None:
-                print('\nenergy:\t'+str(lammps.energy/self.totalnumber))
+           # if lammps!=None:
+            #    print('\nenergy:\t'+str(lammps.energy/self.totalnumber))
             self.update_merit()
             #print('disterror:\t'+str(self.disterror))
-            print('merit:\t'+str(self.merit))
+            if self.merit!=oldmerit:
+                print('merit:\t'+str(self.merit))
         self.errorlist.append(self.merit)
         self.write_xyz()    
         self.write_topfile() 
@@ -468,8 +480,8 @@ class Atom(Master):
 #                                            self.y+random.normalvariate(0,2),
 #                                            self.z+random.normalvariate(0,2)],
 #                                            maxiter=30,full_output=True,disp=False)[:2]
-         print(  '{0:4s}   {1:9s}   {2:9s}   {3:9s}   {4:9s}'.format('Iter', ' X1', ' X2', ' X3', 'f(X)')   )
-         print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(0, self.x,self.y,self.z, self.master.merit)   )
+         #print(  '{0:4s}   {1:9s}   {2:9s}   {3:9s}   {4:9s}'.format('Iter', ' X1', ' X2', ' X3', 'f(X)')   )
+         #print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(0, self.x,self.y,self.z, self.master.merit)   )
 #         res=minimize(errfun,[self.x+random.normalvariate(0,2),self.y+random.normalvariate(0,2),self.z+random.normalvariate(0,2)],
 #                              options={'maxiter':1},callback=callbackF)
 #         x=res.x[0]
@@ -481,7 +493,7 @@ class Atom(Master):
          z=res[2]
          self.set_position(x,y,z,update_lammps=(energy_contribution!=0))
          fopt=self.master.update_merit()
-         print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(1, self.x,self.y,self.z, self.master.merit)   )
+         #print(  '{0:4d}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}   {4: 3.6f}'.format(1, self.x,self.y,self.z, self.master.merit)   )
          
          if fopt>=olderror:
              self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=(energy_contribution!=0))
@@ -515,14 +527,14 @@ class Atom(Master):
                 signs[i]=-1
             else:
                 signs[i]=1
-            rets.append([abs(vec[i]/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[i],self.master.disterror**2-olddist**2,ens[0]])
+            rets.append([abs(vec[i]/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[i],self.master.disterror-olddist,ens[0]])
         self.set_position(oldpars[0]+xs,oldpars[1]+ys,oldpars[2]+zs,update_lammps=True)
         self.master.update_disterror()
         #radius=np.sqrt((oldpars[0]-xr)**2+(oldpars[1]-yr)**2+(oldpars[2]-zr)**2)/self.master.views[0].imageWidth*self.master.views[0].fov*1000
         ret=[abs(xs/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[0],
              abs(ys/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[1],
              abs(zs/self.master.views[0].imageWidth*self.master.views[0].fov*10)*signs[2],
-             self.master.disterror**2-olddist**2,(lammps.energy-oldenergy)/self.master.totalnumber]
+             self.master.disterror-olddist,(lammps.energy-oldenergy)/self.master.totalnumber]
         self.master.potentials.append(ret)
         self.master.potentials1dx.append(rets[0])
         self.master.potentials1dy.append(rets[1])
@@ -865,8 +877,8 @@ class TwoDatom(View):
         self.error=-1
         
     def update_error(self):
-        self.error=np.sqrt((self.x_calc-self.x)**2+(self.y_calc-self.y)**2)
-        self.error*=1/self.view.imageWidth*self.view.fov*100 #10*pm
+        scale=1/self.view.imageWidth*self.view.fov*100#10 pm
+        self.error=((self.x_calc-self.x)*scale)**2+((self.y_calc-self.y)*scale)**2
         return self.error
         
     def update_position(self,updateError=True):
