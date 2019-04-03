@@ -52,6 +52,10 @@ class Quaternion():
     
     def q_multConjugate(self,q2):
         return self.q_mult(q2.q_conjugate())
+    
+    def set_azimuth(self,angle):
+        self.azimuth=angle
+        self.v=self.axisangle_to_q([np.cos(self.azimuth),np.sin(self.azimuth),0],self.inclination)
         
     
     ### this is the rotation of a list with 3D points 

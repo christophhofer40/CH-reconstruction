@@ -77,7 +77,7 @@ class Master:
                         else:
                             self.totalnumber+=1
                     else:
-                        if int(splitline[1])>=0: 
+                        if int(splitline[1])>=0 and (len(self.image_stack.shape)>2): 
                             if (math.isnan(self.image_stack[chapter][int(float(splitline[3])+0.5),int(float(splitline[2])+0.5)]) and 
                                 self.atoms[int(splitline[1])].member):
                                 #print('excluding atom id '+str(int(splitline[1])))
@@ -114,7 +114,9 @@ class Master:
                     self.views[chapter].global_scale=float(splitline[1])
                 if line.startswith('BACKGROUND'):
                     splitline=line.strip().split('\t')
-                    self.views[chapter].background=float(splitline[1])    
+                    self.views[chapter].background=float(splitline[1])   
+                if line.startswith('STRETCH'):
+                    self.views[chapter].stretch=float(splitline[1])
                 if line.startswith('IMPURITIES'):
                     splitline=line.strip().split('\t')
                     self.views[chapter].impurities=float(splitline[1])                    
@@ -408,8 +410,30 @@ class Master:
         np.savetxt(self.path+'potential1dx.txt',self.potentials1dx,header='distance\tenergys')
         np.savetxt(self.path+'potential1dy.txt',self.potentials1dy,header='distance\tenergys')
         np.savetxt(self.path+'potential1dz.txt',self.potentials1dz,header='distance\tenergys')
-    
+        
+    def match_azimuth(self):
+        for view in self.views:
+            view.match_azimuth()
+        
+    def update_stretch(self):
+        for view in self.views:
+            view.update_stretchfactor()
             
+    def smooth_structure(self,weight=0.5):
+        for atom in self.atoms:
+            if not atom.member:
+                continue
+            atom.temp_z=atom.z
+            for neighb in atom.neighbors: 
+                atom.temp_z+=neighb.z
+            atom.temp_z/=(len(atom.neighbors)+1)
+        for atom in self.atoms:
+            if not atom.member:
+               continue
+            atom.z=atom.z+(atom.temp_z-atom.z)*weight
+        self.update_merit()
+        self.write_xyz()
+    
                         
 class Atom(Master):
     def __init__(self,master,x,y,z,id_,viewcounts,element=6):
@@ -424,6 +448,7 @@ class Atom(Master):
         self.neighbors=[]
         self.rings=[]
         self.member=True #if it is included in 3D model
+        self.temp_z=0 ## for smoothing
         
     def set_position(self,x,y,z,update_lammps=True):
         #global lammps
@@ -487,7 +512,7 @@ class Atom(Master):
 #         x=res.x[0]
 #         y=res.x[1]
 #         z=res.x[2]
-         res=opt(errfun,oldpars,iterations=5,std=2)
+         res=opt(errfun,oldpars,iterations=5,std=5,mean=self.get_error()/4)
          x=res[0]
          y=res[1]
          z=res[2]
@@ -542,6 +567,10 @@ class Atom(Master):
         self.set_position(oldpars[0],oldpars[1],oldpars[2],update_lammps=True)
         self.master.update_disterror()
         return (ret,rets) #3D, array of each direction
+    
+    
+
+    
     ## this method should be used to geomatrically relax the structure when there is only one view    
     def equalize_bonds(self):
         def errfun(param):
@@ -556,6 +585,10 @@ class Atom(Master):
             self.z=oldpar
         else:
             self.z=z[0]
+            
+
+        
+            
             
     def calc_bondstd(self):
         atlist=[]
@@ -594,6 +627,7 @@ class View:
         self.canvas_size=int(self.imageWidth/2) #enlargens deltalattice
         self.deltalattice=np.zeros((self.imageHeight+self.canvas_size-1,self.imageWidth+self.canvas_size-1))
         self.background=0  
+        self.stretch=1
         self.global_scale=1
         self.im=autotune.Imaging()
         self.track_error=[]
@@ -601,7 +635,7 @@ class View:
         self.impurities=0
         self.mask=kwargs.get('mask',[])
         self.quaternion=None
-        self.translation=[10,0]
+        self.translation=[0,0]
     
     def simulate_image(self):
         self.get_deltalattice()
@@ -715,6 +749,8 @@ class View:
         self.track_error.append(self.error)
         print('new error:\t'+str(self.error))
         
+
+        
     def match_contrast(self):
         print('optimizing contrast...')
         def errfun(params):
@@ -786,6 +822,8 @@ class View:
         else:
             print('no improvement')
             
+            
+            
     def optimize_2Dpositions(self):
         def errfun(params,atom):
             atom.x=params[0]
@@ -798,7 +836,8 @@ class View:
             olderror=self.error
             #print('\n\nolderror:'+str(olderror))
             oldpars=(at.x,at.y)
-            (x,y),fopt=fmin(errfun,[at.x+random.normalvariate(0,1.5),at.y+random.normalvariate(0,1.5)], args=(at,),full_output=True,maxiter=5,disp=False)[:2]
+            stepsize=1.5
+            (x,y),fopt=fmin(errfun,[at.x+random.normalvariate(0,stepsize),at.y+random.normalvariate(0,stepsize)], args=(at,),full_output=True,maxiter=5,disp=False)[:2]
             if fopt>=olderror and olderror!=-1:
                 #print('WARNING: optimization leads to larger error')
                 #print('olderr:\t'+str(olderror))
@@ -862,6 +901,39 @@ class View:
                     atom.x_calc+=self.translation[0]
                     atom.y_calc+=self.translation[1]
                     
+    def update2D(self,update_translation=True):
+        for at in self.twoDatoms:
+            at.update_position(apply_translation= not update_translation)
+        if update_translation:
+            self.update_translation()
+                    
+    def match_azimuth(self):
+        def errfun(params):
+            self.quaternion.set_azimuth(params[0])
+            self.update2D()
+            
+            return self.update_distance_error()
+        oldpar=[self.quaternion.azimuth]
+        print('azimuth before:\t'+str(oldpar))
+        #olderror=self.update_distance_error()
+        res=opt(errfun,oldpar,iterations=5,std=2)
+        self.quaternion.set_azimuth(res[0])
+        self.update2D()
+        print('azimuth after:\t'+str(res))
+    
+    def update_stretchfactor(self):
+        def errfun(params):
+            self.stretch=params[0]
+            self.update2D()            
+            return self.update_distance_error()
+        
+        oldpar=[self.stretch]
+        #olderror=self.update_distance_error()
+        res=opt(errfun,oldpar,iterations=5,std=0.01)
+        self.stretch=res[0]
+        self.update2D()
+        print('stretch after:\t'+str(res))
+        
 
 class TwoDatom(View):
     
@@ -881,9 +953,16 @@ class TwoDatom(View):
         self.error=((self.x_calc-self.x)*scale)**2+((self.y_calc-self.y)*scale)**2
         return self.error
         
-    def update_position(self,updateError=True):
+    def update_position(self,updateError=True, apply_translation=True,apply_stretch=True):
         (self.x_calc,self.y_calc,self.z)=self.view.quaternion.qv_mult([self.atom.x,self.atom.y,self.atom.z])
-        self.x_calc+=self.view.translation[0]
-        self.y_calc+=self.view.translation[1]
+        if apply_translation:
+            self.x_calc+=self.view.translation[0]
+            self.y_calc+=self.view.translation[1]
+        if apply_stretch:
+            dx=self.x_calc-self.view.imageWidth/2
+            dy=self.y_calc-self.view.imageHeight/2
+            self.x_calc+=(self.view.stretch-1)*dx
+            self.y_calc+=(self.view.stretch-1)*dy
+        
         if updateError:
             self.update_error()
