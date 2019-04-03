@@ -15,17 +15,18 @@ import numpy as np
 
 def read_inputFile(inputdic):
     exists = os.path.isfile(path+'input.txt')
-    keys=np.array(['blur','viewnumber','aberrations','contrast','intensities','positions','threefold','iterations','reconstruct','energy','potential'])
+    keys=np.array(['blur','viewnumber','aberrations','contrast','intensities','positions','threefold',
+                   'iterations','reconstruct','energy','potential','azimuth','stretch','smooth'])
     for key in keys:
         inputdic[key]=False
     inputdic['viewnumber']=-1
-    inputdic['iterations']=0
+    inputdic['iterations']=1
     inputdic['energy']=0
     if not exists:
         print('writing input file')
         with open(path+'input.txt','w') as f:
             for key in keys:
-                f.write('#'+key+'\t'+str(inputdic[key])+'\n')
+                f.write('#'+key+'\tTrue\n')
         return
     
     with open(path+'input.txt','r') as f:
@@ -49,8 +50,10 @@ if __name__=='__main__':
     #topfile='/home/christoph/hdd/DATA/samples/GO/configurations_statistics/configurations/pair/models/new/pair_stack-masked2.top'
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/monovacancy/models/Stack-masked.top'   
     #topfile='/home/christoph/samples/GO/configurations_statistics/configurations/vacancy-substitution/models/Stack-vacncies-masked2.top'
-    #topfile='/home/christoph/gits/CH-reconstruction/tests2/noisy_projection.top' 
-    topfile='/home/christoph/gits/CH-reconstruction/tests_small/noisy_projections.top' 
+    topfile='/home/christoph/gits/CH-reconstruction/tests3/noisy_projections.top' 
+    #topfile='/home/christoph/gits/CH-reconstruction/tests2/noisy_projection.top'
+    topfile='/home/christoph/gits/CH-reconstruction/tests_gb/gb18_41_prep.top'
+    #topfile='/home/christoph/gits/CH-reconstruction/tests_small/noisy_projections.top' 
     path=os.path.dirname(topfile)+'/'
     inputdic={}
     read_inputFile(inputdic)
@@ -98,12 +101,22 @@ if __name__=='__main__':
                     if master.lammps==None:
                         print('initializing lammps...')
                         master.init_lammps()
+                if inputdic.get('azimuth',False):
+                    print('matching azimuth angle...')
+                    master.match_azimuth()  
+                if inputdic.get('stretch',False):
+                    print('matching stretch factor...')
+                    master.update_stretch()  
                 if inputdic.get('reconstruct',False):  
                     print('optimizing 3D structure...')
                     master.optimize_structure()                
                 if inputdic.get('potential',False):  
                     print('calculating potential...')
-                    master.calc_potentials()               
+                    master.calc_potentials()  
+                if inputdic.get('smooth',False):  
+                    print('smooth structure...')
+                    master.smooth_structure()
+                
             master.write_topfile()
             ar=master.save_errortrack()
             print('done!')
