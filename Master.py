@@ -208,7 +208,7 @@ class Master:
             f.write('#ENERGY_CONTRIBUTION\t'+str(energy_contribution)+'\n')
             if lammps!=None:
                 f.write('#ENERGY\t'+str(lammps.energy/self.totalnumber)+'\n')
-            f.write('#DEVIATION\t'+str(self.disterror)+'\n\n')
+            f.write('#DEVIATION\t'+str(self.update_disterror())+'\n\n')
             f.write('MASTER\t'+str(len(self.atoms))+'\n\n')
             for atom in self.atoms:
                 f.write('ATOM\t'+str(atom.id)+'\t'+str(atom.viewcounts)+'\t'+str(atom.x)+'\t'+str(atom.y)+'\t'+str(atom.z)+'\t'+str(atom.element)+'\n')
